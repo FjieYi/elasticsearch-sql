@@ -1,16 +1,14 @@
 package com.alibaba.druid.pool;
 
-import com.alibaba.druid.util.jdbc.ResultSetMetaDataBase;
+import com.alibaba.druid.util.jdbc.ResultSetMetaDataBase.ColumnMetaData;
 
 import java.io.InputStream;
 import java.io.Reader;
 import java.math.BigDecimal;
 import java.net.URL;
 import java.sql.*;
-import java.util.Calendar;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Map;
+import java.sql.Date;
+import java.util.*;
 
 /**
  * Created by allwefantasy on 8/30/16.
@@ -20,14 +18,17 @@ public class ElasticSearchResultSet implements ResultSet {
     Iterator<List<Object>> iterator;
     List<Object> current = null;
     List<String> headers = null;
+    List<ColumnMetaData> columnMetas = null;
 
 
     private ResultSetMetaData metaData;
 
-    public ElasticSearchResultSet(Statement statement, final List<String> headers, final List<List<Object>> lines) {
+    public ElasticSearchResultSet(Statement statement, final List<ColumnMetaData> headers, final List<List<Object>> lines) {
         this.iterator = lines.iterator();
-        this.headers = headers;
-        metaData = new ElasticSearchResultSetMetaDataBase(headers);
+        this.columnMetas = headers;
+        this.headers = new ArrayList<>();
+        headers.forEach(h -> this.headers.add(h.getColumnName()));
+        metaData = new ElasticSearchResultSetMetaDataBase(columnMetas);
 
     }
 
@@ -243,7 +244,7 @@ public class ElasticSearchResultSet implements ResultSet {
 
     @Override
     public int findColumn(String columnLabel) throws SQLException {
-        return ((ResultSetMetaDataBase) metaData).findColumn(columnLabel);
+        return ((com.alibaba.druid.util.jdbc.ResultSetMetaDataBase) metaData).findColumn(columnLabel);
     }
 
     @Override

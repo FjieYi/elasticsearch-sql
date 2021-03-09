@@ -1,20 +1,15 @@
 package com.alibaba.druid.pool;
 
+import com.alibaba.druid.util.jdbc.ResultSetMetaDataBase.ColumnMetaData;
 import org.elasticsearch.client.Client;
-import org.elasticsearch.client.transport.TransportClient;
 import org.elasticsearch.plugin.nlpcn.QueryActionElasticExecutor;
-import org.elasticsearch.plugin.nlpcn.executors.CSVResult;
-import org.elasticsearch.plugin.nlpcn.executors.CSVResultsExtractor;
-import org.elasticsearch.plugin.nlpcn.executors.CsvExtractorException;
 import org.nlpcn.es4sql.SearchDao;
-import org.nlpcn.es4sql.exception.SqlParseException;
 import org.nlpcn.es4sql.jdbc.ObjectResult;
 import org.nlpcn.es4sql.jdbc.ObjectResultsExtractor;
 import org.nlpcn.es4sql.query.QueryAction;
 
 import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.sql.SQLFeatureNotSupportedException;
 import java.util.List;
 
 /**
@@ -44,7 +39,7 @@ public class ElasticSearchDruidPooledPreparedStatement extends DruidPooledPrepar
 
 
             ObjectResult extractor = getObjectResult(true, getSql(), false, false, true);
-            List<String> headers = extractor.getHeaders();
+            List<ColumnMetaData> headers = extractor.getHeaders();
             List<List<Object>> lines = extractor.getLines();
 
             ResultSet rs = new ElasticSearchResultSet(this, headers, lines);
@@ -58,13 +53,14 @@ public class ElasticSearchDruidPooledPreparedStatement extends DruidPooledPrepar
 
             return poolableResultSet;
         } catch (Throwable t) {
+            t.printStackTrace();
             throw checkException(t);
         } finally {
             conn.afterExecute();
         }
     }
 
-    private ObjectResult getObjectResult(boolean flat, String query, boolean includeScore, boolean includeType, boolean includeId) throws SqlParseException, SQLFeatureNotSupportedException, Exception, CsvExtractorException {
+    private ObjectResult getObjectResult(boolean flat, String query, boolean includeScore, boolean includeType, boolean includeId) throws Exception {
         SearchDao searchDao = new org.nlpcn.es4sql.SearchDao(client);
 
         //String rewriteSQL = searchDao.explain(getSql()).explain().explain();

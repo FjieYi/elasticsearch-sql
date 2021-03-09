@@ -1,5 +1,6 @@
 package org.nlpcn.es4sql.jdbc;
 
+import com.alibaba.druid.util.jdbc.ResultSetMetaDataBase.ColumnMetaData;
 import org.elasticsearch.search.SearchHit;
 import org.elasticsearch.search.SearchHitField;
 import org.elasticsearch.search.SearchHits;
@@ -37,16 +38,17 @@ public class ObjectResultsExtractor {
         if (queryResult instanceof SearchHits) {
             SearchHit[] hits = ((SearchHits) queryResult).getHits();
             List<Map<String, Object>> docsAsMap = new ArrayList<>();
-            List<String> headers = createHeadersAndFillDocsMap(flat, hits, docsAsMap);
+            List<ColumnMetaData> headers = createHeadersAndFillDocsMap(flat, hits, docsAsMap);
             List<List<Object>> lines = createLinesFromDocs(flat, docsAsMap, headers);
             return new ObjectResult(headers, lines);
         }
         if (queryResult instanceof Aggregations) {
             List<String> headers = new ArrayList<>();
+            List<ColumnMetaData> columnMeta = new ArrayList<>();
             List<List<Object>> lines = new ArrayList<>();
             lines.add(new ArrayList<Object>());
             handleAggregations((Aggregations) queryResult, headers, lines);
-            
+
             // remove empty line。
             if(lines.get(0).size() == 0) {
                 lines.remove(0);
@@ -55,7 +57,8 @@ public class ObjectResultsExtractor {
             //Aggregations that inhrit from base
             //ScriptedMetric
 
-            return new ObjectResult(headers, lines);
+            headers.forEach(h -> columnMeta.add(buildColumnMetaData(h, null)));// TODO字段类型不能获取
+            return new ObjectResult(columnMeta, lines);
 
         }
         return null;
@@ -231,27 +234,28 @@ public class ObjectResultsExtractor {
         return aggregations.asList().get(0);
     }
 
-    private List<List<Object>> createLinesFromDocs(boolean flat, List<Map<String, Object>> docsAsMap, List<String> headers) {
+    private List<List<Object>> createLinesFromDocs(boolean flat, List<Map<String, Object>> docsAsMap, List<ColumnMetaData> headers) {
         List<List<Object>> objectLines = new ArrayList<>();
         for (Map<String, Object> doc : docsAsMap) {
             List<Object> lines = new ArrayList<>();
-            for (String header : headers) {
-                lines.add(findFieldValue(header, doc, flat));
+            for (ColumnMetaData header : headers) {
+                lines.add(findFieldValue(header.getColumnName(), doc, flat));
             }
             objectLines.add(lines);
         }
         return objectLines;
     }
 
-    private List<String> createHeadersAndFillDocsMap(boolean flat, SearchHit[] hits, List<Map<String, Object>> docsAsMap) {
-        Set<String> csvHeaders = new HashSet<>();
+    private List<ColumnMetaData> createHeadersAndFillDocsMap(boolean flat, SearchHit[] hits, List<Map<String, Object>> docsAsMap) {
+        Set<ColumnMetaData> headerMetas = new HashSet<>();
+        Map<String, String> csvHeaders = new HashMap<>();
         for (SearchHit hit : hits) {
             Map<String, Object> doc = hit.getSourceAsMap();
             Map<String, SearchHitField> fields = hit.getFields();
             for (SearchHitField searchHitField : fields.values()) {
                 doc.put(searchHitField.getName(), searchHitField.getValue());
             }
-            mergeHeaders(csvHeaders, doc, flat);
+            mergeHeaders(headerMetas, csvHeaders, doc, flat);
             if (this.includeScore) {
                 doc.put("_score", hit.getScore());
             }
@@ -263,15 +267,15 @@ public class ObjectResultsExtractor {
             }
             docsAsMap.add(doc);
         }
-        ArrayList<String> headersList = new ArrayList<>(csvHeaders);
+        ArrayList<ColumnMetaData> headersList = new ArrayList<>(headerMetas);
         if (this.includeScore) {
-            headersList.add("_score");
+            headersList.add(buildColumnMetaData("_score", "float"));
         }
         if (this.includeType) {
-            headersList.add("_type");
+            headersList.add(buildColumnMetaData("_type", "string"));
         }
         if (this.includeId) {
-            headersList.add("_id");
+            headersList.add(buildColumnMetaData("_id", "string"));
         }
         return headersList;
     }
@@ -299,22 +303,70 @@ public class ObjectResultsExtractor {
         return null;
     }
 
-    private void mergeHeaders(Set<String> headers, Map<String, Object> doc, boolean flat) {
+    private void mergeHeaders(Set<ColumnMetaData> headers, Map<String, String> headerNames, Map<String, Object> doc, boolean flat) {
         if (!flat) {
-            headers.addAll(doc.keySet());
+            Object obj = null;
+            String val = null;
+            for (String key : doc.keySet()) {
+                obj = doc.get(key);
+                if(!headerNames.containsKey(key) || (headerNames.get(key) == null && obj != null)) {
+                    if(!headerNames.containsKey(key)) {
+                        headers.add(buildColumnMetaData(key, val));
+                    }else {
+                        for(ColumnMetaData cd: headers) {
+                            if(key.equals(cd.getColumnName())){
+                                cd.setColumnTypeName(val);
+                            }
+                        }
+                    }
+                    val = getTypeName(obj);
+                    headerNames.put(key, val);
+                }
+            }
             return;
         }
-        mergeFieldNamesRecursive(headers, doc, "");
+        mergeFieldNamesRecursive(headers, headerNames, doc, "");
     }
 
-    private void mergeFieldNamesRecursive(Set<String> headers, Map<String, Object> doc, String prefix) {
+    private void mergeFieldNamesRecursive(Set<ColumnMetaData> headers, Map<String, String> headerNames, Map<String, Object> doc, String prefix) {
+        String key = null;
+        String val = null;
         for (Map.Entry<String, Object> field : doc.entrySet()) {
             Object value = field.getValue();
+            key = prefix + field.getKey();
             if (value instanceof Map) {
-                mergeFieldNamesRecursive(headers, (Map<String, Object>) value, prefix + field.getKey() + ".");
+                mergeFieldNamesRecursive(headers, headerNames, (Map<String, Object>) value, key + ".");
             } else {
-                headers.add(prefix + field.getKey());
+                if(!headerNames.containsKey(key) || (headerNames.get(key) == null && value != null)) {
+                    if(!headerNames.containsKey(key)) {
+                        headers.add(buildColumnMetaData(key, val));
+                    }else {
+                        for(ColumnMetaData cd: headers) {
+                            if(key.equals(cd.getColumnName())){
+                                cd.setColumnTypeName(val);
+                            }
+                        }
+                    }
+                    val = getTypeName(value);
+                    headerNames.put(key, val);
+                }
             }
         }
     }
+
+    private static ColumnMetaData buildColumnMetaData(String columnName, String columnTypeName) {
+        ColumnMetaData columnMetaData = new ColumnMetaData();
+        columnMetaData.setColumnName(columnName);
+        columnMetaData.setColumnLabel(columnName);
+        columnMetaData.setColumnTypeName(columnTypeName);
+        return columnMetaData;
+    }
+
+    private static String getTypeName(Object val) {
+        if(val == null) return null;
+        String completeName = val.getClass().getTypeName();
+        return completeName.substring(completeName.lastIndexOf(".") + 1).toLowerCase();
+    }
+
+
 }
